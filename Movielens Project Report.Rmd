@@ -10,13 +10,23 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-library(tidyverse)
-library(knitr)
-library(kableExtra)
-library(scales)
-library(lubridate)
-library(gridExtra)
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(scales)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("caret", repos = "http://cran.us.r-project.org")
+
 library(caret)
+library(data.table)
+library(gridExtra)
+library(kableExtra)
+library(knitr)
+library(lubridate)
+library(scales)
+library(tidyverse)
 
 options(digits=7)
 ```
@@ -32,7 +42,7 @@ In order to reach this goal, the author has explored the data set and constructe
 The first step is to download the supplied data set for analysis.
 
 
-```{r download movielens, eval=FALSE}
+```{r download movielens}
 
 ##########################################################
 # Create edx set, validation set (final hold-out test set)
@@ -77,10 +87,6 @@ edx <- rbind(edx, removed)
 
 rm(dl, ratings, movies, test_index, temp, movielens, removed)
 
-```
-
-```{r echo=FALSE}
-load('rda/edx.rda')
 ```
 
 # Overview
@@ -266,6 +272,10 @@ RMSE = function(observed, predicted){
 
 ```
 
+
+$$RMSE=\sqrt{\frac{\sum{(y_i-\hat{y})^2}}{n}}$$
+
+
 As mentioned before, the goal was to achieve the RMSE **lower than or equal to 0.86490**.
 
 # Methods
@@ -438,7 +448,7 @@ tune_lambda <- sapply(lambda, function(l){
 data.frame(l=lambda, rmse = tune_lambda) %>%           # plot the results
   ggplot(aes(l, rmse)) + 
   geom_point(color="#53d1ee", size=3) + 
-  geom_text(aes(label=l), vjust = -2, size = 4)
+  geom_text(aes(label=l), vjust = -2, size = 3)
 
 ```
 
@@ -474,10 +484,6 @@ The regularized model utilizing user, movie, and genres biases meet the requirem
 # Validation
 
 A function that will return the RMSE has already been defined. The train data set has already been used to decide on which model should be selected base on its performance. Having that that, the author has to additionally load a separate data set that only serves for final evaluation of selected model. This allows for avoiding the risk of overfitting.
-
-```{r echo=FALSE}
-load('rda/validation.rda')
-```
 
 ```{r validation, warning = FALSE, message=FALSE}
 

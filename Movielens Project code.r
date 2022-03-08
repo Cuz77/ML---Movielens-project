@@ -8,13 +8,25 @@
 
 
 # Load required libraries
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(scales)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("caret", repos = "http://cran.us.r-project.org")
+
 library(caret)
 library(data.table)
-options(digits=7)
+library(gridExtra)
+library(kableExtra)
+library(knitr)
 library(lubridate)
 library(scales)
-library(stringr)
 library(tidyverse)
+
+options(digits=7)
 
 
 #-------------------------------------------------------------------------#
