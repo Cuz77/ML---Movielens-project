@@ -42,7 +42,7 @@ In order to reach this goal, the author has explored the data set and constructe
 The first step is to download the supplied data set for analysis.
 
 
-```{r download movielens}
+```{r download movielens, warning = FALSE, message=FALSE}
 
 ##########################################################
 # Create edx set, validation set (final hold-out test set)
@@ -93,7 +93,7 @@ rm(dl, ratings, movies, test_index, temp, movielens, removed)
 
 Now, the data set can be reviewed to identify relevant features and trends.
 
-```{r movielens preview}
+```{r movielens preview, echo=FALSE}
 
 edx <- edx %>% mutate(rating_y = year(as_datetime(timestamp)),
               released = str_match(title, "\\(([0-9][0-9][0-9][0-9])\\)")[,2],
@@ -118,13 +118,15 @@ It also includes the following features:
 
 The data generally is in good shape and doesn't contain unexpected anomalies.
 
-```{r}
+```{r, echo=FALSE}
+
 t(summary(edx)[c(1,3,4,6),]) %>% kbl()
+
 ```
 
 # Analysis
 
-Users are more prone to grade a movie with a whole star rating than with half star rating (``r round(mean(edx$rating %% 1 == 0),4)*100``% ratings are natural numbers). It's clearly visible with number of respective ratings plotted.
+Users are more prone to grade a movie with a whole-star rating than with a half-star rating (``r round(mean(edx$rating %% 1 == 0),4)*100``% ratings are natural numbers). It's clearly visible with count of respective ratings plotted.
 
 ```{r echo=FALSE, warning = FALSE, out.width="85%"}
 
@@ -146,10 +148,11 @@ round_to_half <- function(x){round(x/0.5)*0.5}
 
 ```
 
-An important question is if year the movie has been released, as well as time elapsed between premiere and the rating, affect ratings. I can be answered by visualizing key time trends.
+An important question is whether the year the movie has been released, as well as time elapsed between premiere and the rating, affect ratings. I can be answered by visualizing some key time trends.
 
 ```{r echo=FALSE, warning = FALSE, message=FALSE}
 
+# save labels for x axis
 xlabels <- sort(unique(edx$released))
 xlabels[seq(2, length(xlabels), 5)] <- ""
 xlabels[seq(3, length(xlabels), 5)] <- ""
@@ -157,7 +160,7 @@ xlabels[seq(4, length(xlabels), 5)] <- ""
 xlabels[seq(5, length(xlabels), 5)] <- ""
 xlabels[seq(6, length(xlabels), 10)] <- ""
 
-#edx$released <- as.Date(edx$released, format="%Y")
+# plot count of movies by year released
 year_plot <- edx %>%
   group_by(released) %>%
   summarize(n=n_distinct(movieId)) %>%
@@ -170,6 +173,7 @@ year_plot <- edx %>%
   scale_x_discrete(labels = xlabels, breaks = as.integer(xlabels)) +
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1))
 
+# plot ratings by year released
 released_ratings_plot <- edx %>%
   group_by(released) %>%
   summarize(ratings=mean(rating)) %>%
@@ -180,6 +184,7 @@ released_ratings_plot <- edx %>%
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1)) +
   labs(x="year released")
 
+# calculate rating for number of years from the release
 lags <- edx %>%
   group_by(lapsed_y) %>%
   summarize(n=n_distinct(movieId), ratings=mean(rating)) %>%
@@ -189,6 +194,7 @@ colors <- c(rep("#fc4628",2), rep("#3b3f40", nrow(lags)-2))
 lags_cor <- lags %>% filter(lapsed_y >= 0)
 time_cor <- cor(lags_cor$lapsed_y, lags_cor$ratings)
 
+# plot count of movies by year from the release
 lags_plot <- lags %>%
   ggplot(aes(lapsed_y, n)) +
   geom_col(fill=colors) +
@@ -196,16 +202,16 @@ lags_plot <- lags %>%
   labs(x="years lapsed", y="unique movies") +
   theme_minimal()
 
-
 # 175 reviews from people who clearly didn't watch the movie!
 
+# plot ratings by years from release
 lapsed_ratings_plot <- lags %>% ggplot(aes(lapsed_y, ratings)) +
   geom_point(color=c("#fc4628", "#fc4628", rep("#3b3f40", 94)), size=c(3, 3, rep(1, 94))) +
   geom_smooth(method="loess", span=0.75, color="#53d1ee", alpha=0.20) +
   labs(x="years lapsed") +
   theme_minimal()
 
-
+# arrange in a 2x2 grid
 grid.arrange(lapsed_ratings_plot, lags_plot, released_ratings_plot, year_plot, nrow=2)
 
 ```
@@ -250,7 +256,7 @@ print(sum(is.na(edx))) # no NA values
 
 ```
 
-Next, the data has been split into train set and test sets to create and evaluate models.
+Next, the data has been split into train set and test set to create and evaluate models.
 
 ```{r partitions, warning=FALSE, message=FALSE}
 
@@ -264,6 +270,9 @@ test_set <- edx[train_index,]
 
 Finally, a function to evaluate the models score has been declared. The measure used was the standard deviation of the residuals (RMSE).
 
+$$RMSE=\sqrt{\frac{\sum{(y_i-\hat{y})^2}}{n}}$$
+
+
 ```{r rmse, eval=FALSE, warning=FALSE, message=FALSE}
 
 RMSE = function(observed, predicted){
@@ -273,14 +282,11 @@ RMSE = function(observed, predicted){
 ```
 
 
-$$RMSE=\sqrt{\frac{\sum{(y_i-\hat{y})^2}}{n}}$$
-
-
-As mentioned before, the goal was to achieve the RMSE **lower than or equal to 0.86490**.
+As mentioned before, the goal was to achieve the RMSE **lower than or equal than 0.86490**.
 
 # Methods
 
-The start point is to take the expected value and use it as a prediction for each movie. The expected value is just the mean of all ratings in the training set (plus random error). The model took the following form.
+The starting point is the expected value as a prediction for each movie. The expected value is just the mean of all ratings in the training set (plus random error). The model took the following form.
 
 $$y = \mu + \epsilon$$
 
@@ -294,7 +300,7 @@ expected_value_rmse <- RMSE(test_set$rating, mu)
 print(expected_value_rmse)
 ```
 
-Any model worth its time have to be better than that and beat the average. For starters, a model including movie bias has been constructed. Since it is known that some movies are more popular than other, the author calculated the distance from each movie's average rating and the overall data set average. This model now includes the movie bias ($b_m$) for any given movie prediction ($y_m$).
+Any model worth its time has to be better than that and beat the average. For starters, a model including movie bias has been constructed. Since it is known that some movies are more popular than others, the author calculated the distance from each movie's average rating and the overall data set average. This model now includes the movie bias ($b_m$) for any given movie prediction ($y_m$).
 
 $$y_m = \mu + b_m + \epsilon$$
 
@@ -319,7 +325,7 @@ print(movie_bias_rmse)
 ```
 
 
-It's already better but still not close to the goal. Luckily, this model can be improved further when realized that some users are more critical than others. The new model will include the movie bias ($b_m$) and user bias ($b_u$) for any given movie prediction for given user ($y_{mu}$), thus changing the model to a new form.
+It's already better but still not close to the goal. Luckily, this model can be improved further when realized that some users are more critical than others. The new model will include the movie bias ($b_m$) and user bias ($b_u$) for any given movie prediction for given user ($y_{mu}$), thus changing the model as follows.
 
 $$y_{m,u} = \mu + b_m + b_u + \epsilon$$
 
@@ -375,7 +381,7 @@ print(genres_user_movie_rmse)
 
 ```
 
-This time the improvement is nearly unnoticeable. A function could be defined to deconstruct the genres combination (e.g. "Action|Drama|Sci-Fi|Thriller") into respective genres and measures the sum of their biases but it's a computation-heavy solution for such a large data set and more importantly - doesn't yield satisfactory results. The author won't pursue this approach in this report but the following code can be used for such an approach for demonstration purposes.
+This time the improvement is nearly unnoticeable. A function could be defined to deconstruct the genres combination (e.g. "Action|Drama|Sci-Fi|Thriller") into respective genres and measures the sum of their biases but it's a computation-heavy solution for such a large data set and more importantly - doesn't yield satisfactory results. The author won't pursue this approach here but the following code can be used for such an approach for demonstration purposes (this code has been ran and evaluated in the attached R file).
 
 ```{r genres function, eval=FALSE, warning = FALSE, message=FALSE}
 
@@ -411,7 +417,7 @@ genre_mu <- check_genres_mu(test_set)
 
 The outcome of the model factoring in movie, user, and genres combination biases is already close to the goal defined at the beginning (0.86517 vs **0.86490**).
 
-Having the model chosen, it can be tuned for better results. It boils down to experimenting with lambda ($\lambda$) parameter, which will penalize biases for categories without many records (users or movies with few ratings). This is calculated by dividing a sum of biases for the given category by the sum of observations plus the lambda value.
+Having the model chosen, it can be tuned for better results. The tuning in this project boils down to experimenting with lambda ($\lambda$) parameter, which will penalize biases for categories without many records (users or movies with few ratings). This is calculated by dividing a sum of biases for the given category by the sum of observations plus the lambda value.
 
 $$\frac{\sum(bias)}{n+\lambda}$$
 ```{r lambda tune, warning = FALSE, message=FALSE}
@@ -450,16 +456,11 @@ data.frame(l=lambda, rmse = tune_lambda) %>%           # plot the results
   geom_point(color="#53d1ee", size=3) + 
   geom_text(aes(label=l), vjust = -2, size = 3)
 
-```
-
-When plotted, it becomes apparent that the best lambda is 4.75, with the following outcome.
-
-```{r best model, warning = FALSE, message=FALSE}
-
 regularized_genres_user_movie_rmse <- min(tune_lambda)
-print(regularized_genres_user_movie_rmse)
 
 ```
+
+When plotted, it becomes apparent that the best lambda is 4.75, with the RMSE equal to ``r regularized_genres_user_movie_rmse``.
 
 # Results
 

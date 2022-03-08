@@ -1,13 +1,27 @@
+#---------------------------------------------------------------------------------------#
+#                                                                                       #
+#                            INTRODUCTION AND OBJECTIVES                                #
+#                                                                                       #
+#---------------------------------------------------------------------------------------#
 
+#----------------------------------------------->
+# This project originates from the Movielens data set provided as part of the HarvardX program for data 
+# science professionals. Further detail regarding this course can be found under the following address: 
+# https://www.edx.org/professional-certificate/harvardx-data-science
+#
+# The goal of this project is to predict movie ratings based on the aforementioned data set. Specifically,
+# the proposed model has to achieve an RMSE score as low as possible, preferably under 0.86490.
+#
+# The project files can be found under the following address: https://github.com/Cuz77/ML-Movielens
+#----------------------------------------------->
 
-###########################################################################
-#                                                                         #
-#                    PREPARE THE DATA SET AND LIBRARIES                   #
-#                                                                         #
-###########################################################################
+#---------------------------------------------------------------------------------------#
+#                                                                                       #
+#                                PREPARE THE DATA SET                                   #
+#                                                                                       #
+#---------------------------------------------------------------------------------------#
 
-
-# Load required libraries
+# Install required libraries
 if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
 if(!require(data.table)) install.packages("caret", repos = "http://cran.us.r-project.org")
 if(!require(gridExtra)) install.packages("caret", repos = "http://cran.us.r-project.org")
@@ -17,6 +31,7 @@ if(!require(lubridate)) install.packages("caret", repos = "http://cran.us.r-proj
 if(!require(scales)) install.packages("caret", repos = "http://cran.us.r-project.org")
 if(!require(tidyverse)) install.packages("caret", repos = "http://cran.us.r-project.org")
 
+# Load required libraries
 library(caret)
 library(data.table)
 library(gridExtra)
@@ -27,7 +42,6 @@ library(scales)
 library(tidyverse)
 
 options(digits=7)
-
 
 #-------------------------------------------------------------------------#
 # LOAD THE DATA SET                                                       #
@@ -85,7 +99,7 @@ edx %>% select(-timestamp) %>% head(3) %>% kbl()   # quick visual sanity check
 t(summary(edx)[c(1,3,4,6),]) %>% kbl()
                                        
 #---------->
-# Separate the training data set into a part for training and one for testing
+# Separate the training data set into a part for training and an additional one for testing
 #---------->
 
 set.seed(47, sample.kind="Rounding")       # set seed to assure comparable outcomes between runs
@@ -110,7 +124,7 @@ RMSE = function(observed, predicted){
 
 
 #-------------------------------------------------------------------------#
-# VISUALIZATION                                                           #
+# VIZUALIZATION                                                           #
 #-------------------------------------------------------------------------#
 
 
@@ -126,17 +140,15 @@ edx %>%
   scale_x_discrete(limits=seq(0.5,5,0.5)) +
   scale_y_continuous(labels = label_comma())
 
-
 #---------->
-# Only full-star and half-star ratings are allowed
-#---------->
-
 # There are much more full-star than half-star ratings
+#---------->
+
 edx %>% mutate(half_star=rating%%1!=0) %>% 
   group_by(half_star) %>%
   summarize(n=n())
 
-
+# store labels for the x axis
 xlabels <- sort(unique(edx$released))
 xlabels[seq(2, length(xlabels), 5)] <- ""
 xlabels[seq(3, length(xlabels), 5)] <- ""
@@ -144,11 +156,11 @@ xlabels[seq(4, length(xlabels), 5)] <- ""
 xlabels[seq(5, length(xlabels), 5)] <- ""
 xlabels[seq(6, length(xlabels), 10)] <- ""
 
-
 #---------->
 # Movies released more recently are more likely to be reviewed
 #---------->
 
+# plot count of movies by year released
 edx %>%
   group_by(released) %>%
   summarize(n=n_distinct(movieId)) %>%
@@ -161,11 +173,11 @@ edx %>%
   scale_x_discrete(labels = xlabels, breaks = as.integer(xlabels)) +
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1))
 
-
 #---------->
 # Older movies are on average more positively acclaimed but the this effect reverts prior to 1940
 #---------->
 
+# plot ratings by year released
 edx %>%
   group_by(released) %>%
   summarize(ratings=mean(rating)) %>%
@@ -176,11 +188,11 @@ edx %>%
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1)) +
   labs(x="year released")
 
-
 #---------->
 # Older movies are less likely to be reviewed with some movies rated before premiere
 #---------->
 
+# calculate rating for number of years from the release
 lags <- edx %>%
   group_by(lapsed_y) %>%
   summarize(n=n_distinct(movieId), ratings=mean(rating)) %>%
@@ -190,6 +202,7 @@ colors <- c(rep("#fc4628",2), rep("#3b3f40", nrow(lags)-2))
 lags_cor <- lags %>% filter(lapsed_y >= 0)
 time_cor <- cor(lags_cor$lapsed_y, lags_cor$ratings)
 
+# plot count of movies by years from release
 lags %>%
   ggplot(aes(lapsed_y, n)) +
   geom_col(fill=colors) +
@@ -201,12 +214,12 @@ lags %>%
 # Average ratings increase with time passed from premiere up a point after which the trend reverts
 #---------->
 
+# plot ratings by years from release
 lags %>% ggplot(aes(lapsed_y, ratings)) +
   geom_point(color=c("#fc4628", "#fc4628", rep("#3b3f40", 94)), size=c(3, 3, rep(1, 94))) +
   geom_smooth(method="loess", span=0.75, color="#53d1ee", alpha=0.20) +
   labs(x="years lapsed") +
   theme_minimal()
-
 
 #---------->
 # Generally, the more widely known the movie is, the higher ratings it gets. Movies with many reviews receive better 
@@ -218,12 +231,11 @@ edx %>% group_by(movieId) %>%
   cor() %>% .[2:3,2:3]
 
 
-
-###########################################################################
+#-------------------------------------------------------------------------#
 #                                                                         #
 #                          TEST AND COMPARE MODELS                        #
 #                                                                         #
-###########################################################################
+#-------------------------------------------------------------------------#
 
 
 #---------->
@@ -417,21 +429,19 @@ options(pillar.sigfig = 7)
 
 results %>% arrange(RMSE) %>% kbl()
 
-
-###########################################################################
+#-------------------------------------------------------------------------#
 #                                                                         #
-#                     PICK AND EVALUATE THE FINAL MODEL                   #
+#                        EVALUATE THE FINAL MODEL                         #
 #                                                                         #
-###########################################################################
+#-------------------------------------------------------------------------#
 
+#---------->
 # Benchmarks:
 # 10 points: 0.86550 <= RMSE <= 0.89999
 # 15 points: 0.86500 <= RMSE <= 0.86549
 # 20 points: 0.86490 <= RMSE <= 0.86499
 # 25 points: RMSE < 0.86490
-#                   0.8645253
-
-#---------->
+#
 # Validate the final model against the validation set.
 #---------->
 
@@ -463,11 +473,10 @@ FINAL_MODEL <- function(train_set, test_set, l=4.5){
   RMSE(test_set$rating, predictions)
 }
 
-
 final_rmse <- FINAL_MODEL(train_set, validation)
 
 #---------->
-# The 25 points benchmark has been exceeded.
+# The main goal has been exceeded by exceeding the benchmark
 #---------->
 
 final_rmse < 0.86490
