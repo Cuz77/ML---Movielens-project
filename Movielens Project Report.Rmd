@@ -1,0 +1,548 @@
+---
+title: "Movielens Project"
+author: "Jakub Below"
+date: "February 2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(scales)
+library(lubridate)
+library(gridExtra)
+library(caret)
+
+options(digits=7)
+```
+
+# Introduction
+
+This project's goal is to build a model capable of predicting new users' movie ratings based on the movielens data set. The main indicator of success is reaching the RMSE value of the model of 0.86490 or less. 
+
+In order to reach this goal, the author has explored the data set and constructed several predictive models based on his observations. The most effective one has been regularized and then evaluated against the validation set to confirm if the desired RMSE value has been achieved.
+
+# Data Preparation
+
+The first step is to download the supplied data set for analysis.
+
+
+```{r download movielens, eval=FALSE}
+
+##########################################################
+# Create edx set, validation set (final hold-out test set)
+##########################################################
+
+# Note: this process could take a couple of minutes
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
+                                           title = as.character(title),
+                                           genres = as.character(genres))
+
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+```
+
+```{r echo=FALSE}
+load('rda/edx.rda')
+```
+
+# Overview
+
+Now, the data set can be reviewed to identify relevant features and trends.
+
+```{r movielens preview}
+
+edx <- edx %>% mutate(rating_y = year(as_datetime(timestamp)),
+              released = str_match(title, "\\(([0-9][0-9][0-9][0-9])\\)")[,2],
+              lapsed_y = as.integer(rating_y) - as.integer(released))
+edx %>% select(-timestamp) %>% head(3) %>% kbl()
+
+```
+
+This data set consists of ``r format(nrow(edx), big.mark=",")`` rows and ``r ncol(edx)`` columns with ``r edx %>% summarize(n=n_distinct(movieId)) %>% pull(n) %>% format(big.mark=",")`` distinct movies and ``r edx %>% summarize(n=n_distinct(userId))  %>% pull(n) %>% format(big.mark=",")`` distinct users.
+
+It also includes the following features:
+
++ User ID
++ Movie ID
++ Movie rating
++ Movie Title
++ Movie Genres
++ Timestamp (removed from the preview)
++ Year the movie has been rated (calculated by the author)
++ Year the movie has been released (calculated by the author)
++ Years passed between the premiere and rating (calculated by the author)
+
+The data generally is in good shape and doesn't contain unexpected anomalies.
+
+```{r}
+t(summary(edx)[c(1,3,4,6),]) %>% kbl()
+```
+
+# Analysis
+
+Users are more prone to grade a movie with a whole star rating than with half star rating (``r round(mean(edx$rating %% 1 == 0),4)*100``% ratings are natural numbers). It's clearly visible with number of respective ratings plotted.
+
+```{r echo=FALSE, warning = FALSE, out.width="85%"}
+
+edx %>%
+    ggplot(aes(rating)) + 
+    geom_histogram(binwidth=0.5, fill=rep(c("#fc4628", "#3b3f40"), 5), color="white") + 
+    ggtitle("The prevalence of ratings") +
+    theme_minimal() +
+    scale_x_discrete(limits=seq(0.5,5,0.5)) +
+    scale_y_continuous(labels = label_comma())
+
+```
+
+An important conclusion is that we only allow for full-star and half-star ratings. It's not important for constructing the model but if it would ever be used in real-life applications, it should be wrapped with a function like the following one to make sure it returns only viable ratings.
+
+```{r eval=FALSE}
+
+round_to_half <- function(x){round(x/0.5)*0.5}    
+
+```
+
+An important question is if year the movie has been released, as well as time elapsed between premiere and the rating, affect ratings. I can be answered by visualizing key time trends.
+
+```{r echo=FALSE, warning = FALSE, message=FALSE}
+
+xlabels <- sort(unique(edx$released))
+xlabels[seq(2, length(xlabels), 5)] <- ""
+xlabels[seq(3, length(xlabels), 5)] <- ""
+xlabels[seq(4, length(xlabels), 5)] <- ""
+xlabels[seq(5, length(xlabels), 5)] <- ""
+xlabels[seq(6, length(xlabels), 10)] <- ""
+
+#edx$released <- as.Date(edx$released, format="%Y")
+year_plot <- edx %>%
+  group_by(released) %>%
+  summarize(n=n_distinct(movieId)) %>%
+  ggplot(aes(released, n)) +
+  geom_col(fill="#3b3f40") +
+  labs(x="year released", y="unique movies") +
+  theme_minimal() +
+  ggtitle("") +
+  scale_y_continuous(labels = label_comma()) +
+  scale_x_discrete(labels = xlabels, breaks = as.integer(xlabels)) +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1))
+
+released_ratings_plot <- edx %>%
+  group_by(released) %>%
+  summarize(ratings=mean(rating)) %>%
+  ggplot(aes(as.Date(released, format="%Y"), ratings)) + 
+  geom_point() +
+  geom_smooth(method="loess", span=0.75, color="#53d1ee", alpha=0.20) +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1)) +
+  labs(x="year released")
+
+lags <- edx %>%
+  group_by(lapsed_y) %>%
+  summarize(n=n_distinct(movieId), ratings=mean(rating)) %>%
+  setNames(c("lapsed_y","n","ratings"))
+
+colors <- c(rep("#fc4628",2), rep("#3b3f40", nrow(lags)-2))
+lags_cor <- lags %>% filter(lapsed_y >= 0)
+time_cor <- cor(lags_cor$lapsed_y, lags_cor$ratings)
+
+lags_plot <- lags %>%
+  ggplot(aes(lapsed_y, n)) +
+  geom_col(fill=colors) +
+  scale_y_continuous(trans='log2') +
+  labs(x="years lapsed", y="unique movies") +
+  theme_minimal()
+
+
+# 175 reviews from people who clearly didn't watch the movie!
+
+lapsed_ratings_plot <- lags %>% ggplot(aes(lapsed_y, ratings)) +
+  geom_point(color=c("#fc4628", "#fc4628", rep("#3b3f40", 94)), size=c(3, 3, rep(1, 94))) +
+  geom_smooth(method="loess", span=0.75, color="#53d1ee", alpha=0.20) +
+  labs(x="years lapsed") +
+  theme_minimal()
+
+
+grid.arrange(lapsed_ratings_plot, lags_plot, released_ratings_plot, year_plot, nrow=2)
+
+```
+
+The above charts clearly show that there is a time effect, although it's not as straightforward as one may assume.
+
+* Top-left - The older the movie, the higher the average rating. There may be several reasons, e.g. people are more eager to watch good old movies and forget about the bad ones (see the Survivorship Bias). This effect wanes with older movies and completely disappears for the oldest ones - they may be dated and obscure for viewers. An interesting bias can be observed with first two data point highlighted in red. These are movies rated before they were screened. It may indicate that people who do not approve of the director or movie studio can rate the movie negatively without watching them.
+* Top-right - The older the movie, the fewer the ratings. It may support the Survivorship Bias hypothesis (fewer but more popular movies are being watched).
+* Bottom-left - This chart shows premiere year per movie, instead of years passed between release and rating. Older movies receive generally better ratings up to a certain point in which their ratings drop. Additionally, the deviation between ratings year-to-year increase as we move back in time. It also supports previous notions - older movies may be deemed classics but also very old movies may be seen as obscure.
+* Bottom-right - This chart shows yet again that there are more recent movies reviewed than old movies. Initially, a chance to be reviewed increases with time since viewers have more occasions to catch-up with premiers but after several years this trend starts to revert and only well-known movies tend to be watched.
+
+Generally, the more widely known the movie is, the higher ratings it gets. Movies with many reviews receive better ratings on average, which can mean that people tend to watch already popular flicks. The correlation though, is not high.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+edx %>% group_by(movieId) %>%
+  summarize(n=n(), rating=mean(rating)) %>%
+  cor() %>% .[2:3,2:3] %>% kbl()
+
+```  
+
+The above comments may bring interesting insights to our model.
+
+
+# Preparations
+
+The data set has already been transformed to include release year (scraped from the title column), the year the movie has been rated, and number of years between these two occurrences (it can be negative if people bombed the rating between the premiere screening). As a reminder, the following code has been used:
+
+```{r eval=FALSE, warning=FALSE, message=FALSE}
+
+edx <- edx %>% mutate(rating_y = year(as_datetime(timestamp)),
+              released = str_match(title, "\\(([0-9][0-9][0-9][0-9])\\)")[,2],
+              lapsed_y = as.integer(rating_y) - as.integer(released))
+
+```
+
+As the data is clean, there is no NA values, and generally the quality is good, there is no need to extensive cleaning or manipulation of the data set.
+
+```{r sanity check, warning=FALSE, message=FALSE}
+
+print(sum(is.na(edx))) # no NA values
+
+```
+
+Next, the data has been split into train set and test sets to create and evaluate models.
+
+```{r partitions, warning=FALSE, message=FALSE}
+
+# keep 10% of records for evaluation
+set.seed(47, sample.kind="Rounding")        # set seed to receive consistent outcomes
+train_index <- createDataPartition(edx$rating, times=1, p=0.1, list=FALSE)
+train_set <- edx[-train_index,]
+test_set <- edx[train_index,]
+
+```
+
+Finally, a function to evaluate the models score has been declared. The measure used was the standard deviation of the residuals (RMSE).
+
+```{r rmse, eval=FALSE, warning=FALSE, message=FALSE}
+
+RMSE = function(observed, predicted){
+  sqrt(mean((observed - predicted)^2))
+}
+
+```
+
+As mentioned before, the goal was to achieve the RMSE **lower than or equal to 0.86490**.
+
+# Methods
+
+The start point is to take the expected value and use it as a prediction for each movie. The expected value is just the mean of all ratings in the training set (plus random error). The model took the following form.
+
+$$y = \mu + \epsilon$$
+
+```{r expected value, warning=FALSE, message=FALSE}
+
+mu <- mean(train_set$rating)
+
+# Evaluate the model
+expected_value_rmse <- RMSE(test_set$rating, mu)             
+
+print(expected_value_rmse)
+```
+
+Any model worth its time have to be better than that and beat the average. For starters, a model including movie bias has been constructed. Since it is known that some movies are more popular than other, the author calculated the distance from each movie's average rating and the overall data set average. This model now includes the movie bias ($b_m$) for any given movie prediction ($y_m$).
+
+$$y_m = \mu + b_m + \epsilon$$
+
+```{r movie bias, warning = FALSE, message=FALSE}
+
+movie_mu <- train_set %>%
+  group_by(movieId) %>%
+  summarize(b_m = mean(rating - mu))
+
+linear_predictions <- test_set %>%
+  # Join movie distances (biases)
+  left_join(movie_mu, by="movieId") %>%                
+  # Make sure to fill NAs for movies not in the training set
+  mutate(b_m = ifelse(is.na(b_m), 0, b_m)) %>%         
+  # Predict by adding overall mean and movie bias
+  mutate(predict_by_movie = mu + b_m)     
+
+movie_bias_rmse <- RMSE(test_set$rating, linear_predictions$predict_by_movie)
+
+print(movie_bias_rmse)
+
+```
+
+
+It's already better but still not close to the goal. Luckily, this model can be improved further when realized that some users are more critical than others. The new model will include the movie bias ($b_m$) and user bias ($b_u$) for any given movie prediction for given user ($y_{mu}$), thus changing the model to a new form.
+
+$$y_{m,u} = \mu + b_m + b_u + \epsilon$$
+
+```{r user bias, warning = FALSE, message=FALSE}
+
+user_mu <- train_set %>%
+  # Remove movie bias to only get user tendencies to be more or less strict
+  left_join(movie_mu, by="movieId") %>%   
+  group_by(userId) %>%
+  summarize(b_u = mean(rating - mu - b_m))
+
+linear_predictions <- linear_predictions %>%
+  left_join(user_mu, by="userId") %>%
+  mutate(b_u = ifelse(is.na(b_u), 0, b_u)) %>%  
+  mutate(predict_by_user = mu + b_u,
+         predict_by_movie_and_user = mu + b_m + b_u)
+
+user_bias_rmse <- RMSE(test_set$rating, linear_predictions$predict_by_user)
+user_and_movie_rmse <- RMSE(test_set$rating, linear_predictions$predict_by_movie_and_user)
+
+print(user_bias_rmse)
+print(user_and_movie_rmse)
+
+```
+
+Including user bias also improves the model even if slightly less than including just movie bias. However, when taking into account both biases, it yielded over 18% improvement from the initial average approach. 
+
+However, some genres are generally more popular than others. Therefore, it is prudent to attempt to add genre bias, resulting in the following model.
+
+$$y_{m,u,g} = \mu + b_m + b_u + b_g + \epsilon$$
+
+```{r genre bias, warning = FALSE, message=FALSE}
+
+genres_mu <- train_set %>%
+  left_join(movie_mu, by="movieId") %>%   
+  left_join(user_mu, by="userId") %>%  
+  group_by(genres) %>%
+  summarize(b_g = mean(rating - mu - b_m - b_u))
+
+linear_predictions <- linear_predictions %>%
+  left_join(genres_mu, by="genres") %>%
+  mutate(b_g = ifelse(is.na(b_g), 0, b_g)) %>%
+  mutate(predict_by_genres = mu + b_g,
+         predict_by_user_movie_genres  = mu + b_m + b_u + b_g)
+
+genres_bias_rmse <- RMSE(test_set$rating, 
+                         linear_predictions$predict_by_genres)
+genres_user_movie_rmse <- RMSE(test_set$rating, 
+                               linear_predictions$predict_by_user_movie_genres)
+
+print(genres_bias_rmse)
+print(genres_user_movie_rmse)
+
+```
+
+This time the improvement is nearly unnoticeable. A function could be defined to deconstruct the genres combination (e.g. "Action|Drama|Sci-Fi|Thriller") into respective genres and measures the sum of their biases but it's a computation-heavy solution for such a large data set and more importantly - doesn't yield satisfactory results. The author won't pursue this approach in this report but the following code can be used for such an approach for demonstration purposes.
+
+```{r genres function, eval=FALSE, warning = FALSE, message=FALSE}
+
+# create a table of genre biases 
+genre_mus <- train_set %>%                                
+  select(genres, rating) %>% 
+  #(1 - split into respective biases)
+  separate(col=genres, sep="[//|]", into=c("1","2","3","4","5","6","7","8")) %>%
+  #(2 - make it tidy)
+  pivot_longer(1:8, names_to="col_num", values_to="genre") %>%                     
+  filter(!is.na(genre)) %>%
+  group_by(genre) %>% 
+  # distance for each genre from the overall mean
+  summarize(g_mu = mean(rating - mu))                     
+
+check_genres_mu <- function(x){
+  # This function takes in a row of data and checks for each genre in the genres column 
+  # (e.g. Drama|Comedy|Thriller) to sum all the biases for those genres
+  b <- sapply(genre_mus$genre, function(g){                        # for each genre
+    bias <- as.numeric(ifelse(str_detect(x$genres, g),             # if present in string
+                              genre_mus %>% filter(genre==g) %>%   # take bias
+                                .$g_mu, 0)
+                       )
+    bias                                                           # return all biases
+  })
+  rowSums(b)           # take the sum of all genres' biases for given movie                               
+}
+
+# apply the above function to the test set
+genre_mu <- check_genres_mu(test_set)                 
+
+```
+
+The outcome of the model factoring in movie, user, and genres combination biases is already close to the goal defined at the beginning (0.86517 vs **0.86490**).
+
+Having the model chosen, it can be tuned for better results. It boils down to experimenting with lambda ($\lambda$) parameter, which will penalize biases for categories without many records (users or movies with few ratings). This is calculated by dividing a sum of biases for the given category by the sum of observations plus the lambda value.
+
+$$\frac{\sum(bias)}{n+\lambda}$$
+```{r lambda tune, warning = FALSE, message=FALSE}
+
+lambda <- seq(2,8, 0.25)   
+
+tune_lambda <- sapply(lambda, function(l){
+  # This function will apply given lambda to movie bias and check RMSE for predictions
+  movie_mu <- train_set %>%
+    group_by(movieId) %>%
+    summarize(b_m = sum(rating - mu)/(n() + l))       # test bias with a given lambda
+  
+  user_mu <- train_set %>%
+    left_join(movie_mu, by="movieId") %>%
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - mu - b_m)/(n() + l))
+  
+  genres_mu <- train_set %>%                                 
+    left_join(movie_mu, by="movieId") %>%
+    left_join(user_mu, by="userId") %>%
+    group_by(genres) %>%
+    summarize(b_gs = sum(rating - mu - b_m - b_u)/(n() + l))      
+
+  predictions <- test_set %>%
+    left_join(movie_mu, by="movieId") %>%
+    left_join(user_mu, by="userId") %>%
+    left_join(genres_mu, by="genres") %>%
+    replace(is.na(.), 0) %>%
+    mutate(predict = mu + b_u + b_m + b_gs)
+  
+  RMSE(test_set$rating, predictions$predict)
+})
+
+data.frame(l=lambda, rmse = tune_lambda) %>%           # plot the results
+  ggplot(aes(l, rmse)) + 
+  geom_point(color="#53d1ee", size=3) + 
+  geom_text(aes(label=l), vjust = -2, size = 4)
+
+```
+
+When plotted, it becomes apparent that the best lambda is 4.75, with the following outcome.
+
+```{r best model, warning = FALSE, message=FALSE}
+
+regularized_genres_user_movie_rmse <- min(tune_lambda)
+print(regularized_genres_user_movie_rmse)
+
+```
+
+# Results
+
+Finally, all the models can be compared against each other. 
+
+```{r models summary, echo=FALSE, warning = FALSE, message=FALSE}
+
+# Create a table with outcomes for reference
+results <- tibble(method=c("Expected value", "Movie", "User", "User and Movie", 
+                           "Genres", "Genre & User & Movie", "Regularized Genre & User & Movie"),
+                  RMSE=c(expected_value_rmse, movie_bias_rmse, user_bias_rmse, user_and_movie_rmse, 
+                         genres_bias_rmse, genres_user_movie_rmse, regularized_genres_user_movie_rmse))  
+
+
+options(pillar.sigfig = 7)
+results %>% arrange(RMSE) %>% kbl()
+
+```
+
+The regularized model utilizing user, movie, and genres biases meet the requirements. As the final step, it has to be evaluated using the validation data set.
+
+# Validation
+
+A function that will return the RMSE has already been defined. The train data set has already been used to decide on which model should be selected base on its performance. Having that that, the author has to additionally load a separate data set that only serves for final evaluation of selected model. This allows for avoiding the risk of overfitting.
+
+```{r echo=FALSE}
+load('rda/validation.rda')
+```
+
+```{r validation, warning = FALSE, message=FALSE}
+
+FINAL_MODEL <- function(train_set, test_set, l=4.5){
+  # This function will apply given lambda to biases and check RMSE for predictions
+  movie_mu <- train_set %>%
+    group_by(movieId) %>%
+    summarize(b_m = sum(rating - mu)/(n() + l)) 
+  
+  user_mu <- train_set %>%
+    left_join(movie_mu, by="movieId") %>%
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - mu - b_m)/(n() + l))
+  
+  genres_mu <- train_set %>%                                 
+    left_join(movie_mu, by="movieId") %>%
+    left_join(user_mu, by="userId") %>%
+    group_by(genres) %>%
+    summarize(b_gs = sum(rating - mu - b_m - b_u)/(n() + l))      
+  
+  predictions <- test_set %>%
+    left_join(movie_mu, by="movieId") %>%
+    left_join(user_mu, by="userId") %>%
+    left_join(genres_mu, by="genres") %>%
+    replace(is.na(.), 0) %>%
+    mutate(predict = mu + b_u + b_m + b_gs) %>%
+    pull(predict)
+  
+  RMSE(test_set$rating, predictions)
+}
+
+# Pass the validation set to the function to evaluate the final model against it
+final_rmse <- FINAL_MODEL(train_set, validation)  
+
+# Final RMSE
+print(final_rmse)
+
+```
+
+Finally, the author can answer the question: does this model yield expected RMSE lower than **0.86490**?
+
+
+```{r final result, warning = FALSE, message=FALSE}
+
+final_rmse < 0.86490
+
+```
+
+
+# Conclusions
+
+The overall goal of this project was to predict new ratings for movies based on the given data set containing information on already rated movies, their titles, genres, etc. More specifically, the aim was to produce a predictive model with RMSE of at least 0.86490 or less. 
+
+The author downloaded the aforementioned data set and presented an overview of available data and exploratory analysis covering its most important trends and characteristics. After testing several models and tuning them with the regularization techniques, the final model has proven to achieve the main goal as confirmed with the validation data set.
+
+An important notion is that for any model to be implemented in real-life applications, the result has to be rounded to the nearest half so that the outcome matches the rating scale (half-star or full-star ratings between 0.5 and 5.0). 
+
+The final model has utilized data on movie ID, user ID, genres, and ratings. The data set includes a large number of records, which limits further exploration. The model could be potentially refined with the use of date of rating and the date of release since they appear to have an impact on the outcome. More robust models could also create clusters of similar users to leverage their preferences to tweak the final prediction, however, this will also likely be more expensive computation-wise.
+
+
+
+
+
+
+
+
+
+
